@@ -715,6 +715,9 @@ class Meshcat {
    the meshcat browser (e.g. for cameras and lights). */
   void DeleteAddedControls();
 
+  /** Enables VR/XR functionalities for the current scene. */
+  void EnableWebXR(std::string mode);
+
   /** Status of a gamepad obtained from the Meshcat javascript client. */
   struct Gamepad {
     /** Passes this object to an Archive.

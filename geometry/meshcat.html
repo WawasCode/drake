@@ -35,12 +35,6 @@
         viewer.render();
       }
     }
-    //Setup VR in every instace
-    const renderer = viewer.renderer; 
-    const scene = viewer.scene
-    const camera = viewer.camera
-
-    MeshCat.setupVR(renderer, camera, scene);
     const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
 
     // Gamepad support - first check if the gamepad feature is available.

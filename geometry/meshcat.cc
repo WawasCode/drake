@@ -1565,6 +1565,23 @@ class Meshcat::Impl {
   }
 
   // This function is public via the PIMPL.
+  void EnableWebXR(std::string mode) {
+    DRAKE_DEMAND(IsThread(main_thread_id_));
+
+    internal::EnableWebXRData data;
+    data.mode = std::move(mode);
+
+    Defer([this, data = std::move(data)]() {
+        DRAKE_DEMAND(IsThread(websocket_thread_id_));
+        DRAKE_DEMAND(app_ != nullptr);
+        std::stringstream message_stream;
+        msgpack::pack(message_stream, data);
+        app_->publish("all", message_stream.str(), uWS::OpCode::BINARY, false);
+    });
+}
+
+
+  // This function is public via the PIMPL.
   std::string StaticHtml() {
     DRAKE_DEMAND(IsThread(main_thread_id_));
     std::string html = GetUrlContent("/");
@@ -2460,6 +2477,10 @@ void Meshcat::DeleteAddedControls() {
 
 Meshcat::Gamepad Meshcat::GetGamepad() const {
   return impl().GetGamepad();
+}
+
+void Meshcat::EnableWebXR() {
+  impl().EnableWebXR();
 }
 
 std::string Meshcat::StaticHtml() {

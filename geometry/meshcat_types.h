@@ -476,6 +476,11 @@ struct Gamepad {
   MSGPACK_DEFINE_MAP(index, button_values, axes);
 };
 
+struct EnableVR {
+  std::string type{"enable_vr"};
+  MSGPACK_DEFINE_MAP(type);
+};
+
 struct UserInterfaceEvent {
   std::string type;
   std::string name;
