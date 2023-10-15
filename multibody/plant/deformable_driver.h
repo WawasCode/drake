@@ -8,12 +8,14 @@
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
 #include "drake/multibody/contact_solvers/sap/partial_permutation.h"
+#include "drake/multibody/contact_solvers/sap/sap_fixed_constraint.h"
 #include "drake/multibody/contact_solvers/schur_complement.h"
 #include "drake/multibody/fem/discrete_time_integrator.h"
 #include "drake/multibody/fem/fem_solver.h"
 #include "drake/multibody/plant/contact_pair_kinematics.h"
 #include "drake/multibody/plant/deformable_model.h"
-#include "drake/multibody/plant/discrete_update_manager.h"
+#include "drake/multibody/plant/discrete_contact_data.h"
+#include "drake/multibody/plant/discrete_contact_pair.h"
 #include "drake/systems/framework/context.h"
 
 namespace drake {
@@ -66,6 +68,9 @@ class Multiplexer {
   /* The sum over `sizes_`. */
   int num_entries_{0};
 };
+
+template <typename T>
+class DiscreteUpdateManager;
 
 /* DeformableDriver is responsible for computing dynamics information about
  all deformable bodies. It works in tandem with a DeformableModel and a
@@ -139,14 +144,22 @@ class DeformableDriver : public ScalarConvertibleComponent<T> {
    @pre pairs != nullptr. */
   void AppendDiscreteContactPairs(
       const systems::Context<T>& context,
-      std::vector<DiscreteContactPair<T>>* pairs) const;
+      DiscreteContactData<DiscreteContactPair<T>>* pairs) const;
 
   /* Appends the contact kinematics information for each contact pair where at
    least one of the body in contact is deformable.
    @pre result != nullptr. */
   void AppendContactKinematics(
       const systems::Context<T>& context,
-      std::vector<ContactPairKinematics<T>>* result) const;
+      DiscreteContactData<ContactPairKinematics<T>>* result) const;
+
+  /* Appends the constraint kinematics information for each deformable rigid
+   fixed constraint.
+   @pre result != nullptr. */
+  void AppendDeformableRigidFixedConstraintKinematics(
+      const systems::Context<T>& context,
+      std::vector<contact_solvers::internal::FixedConstraintKinematics<T>>*
+          result) const;
 
   /* Evaluates FemState at the next time step for each deformable body and
    copies the them into the corresponding DiscreteValues.
@@ -158,6 +171,11 @@ class DeformableDriver : public ScalarConvertibleComponent<T> {
    @pre result != nullptr. */
   const Multiplexer<T>& EvalParticipatingVelocityMultiplexer(
       const systems::Context<T>& context) const;
+
+  /* Evaluates the constraint participation information of the deformable body
+   with the given `index`. See geometry::internal::ContactParticipation. */
+  const geometry::internal::ContactParticipation& EvalConstraintParticipation(
+      const systems::Context<T>& context, DeformableBodyIndex index) const;
 
  private:
   friend class DeformableDriverTest;
@@ -173,6 +191,7 @@ class DeformableDriver : public ScalarConvertibleComponent<T> {
     std::vector<systems::CacheIndex> fem_solvers;
     std::vector<systems::CacheIndex> next_fem_states;
     systems::CacheIndex deformable_contact;
+    std::vector<systems::CacheIndex> constraint_participations;
     std::vector<systems::CacheIndex> dof_permutations;
     std::unordered_map<geometry::GeometryId, systems::CacheIndex>
         vertex_permutations;
@@ -242,6 +261,12 @@ class DeformableDriver : public ScalarConvertibleComponent<T> {
   /* Eval version of CalcDeformableContact(). */
   const geometry::internal::DeformableContact<T>& EvalDeformableContact(
       const systems::Context<T>& context) const;
+
+  /* Calc version of EvalConstraintParticipation.
+   @pre constraint_participation != nullptr. */
+  void CalcConstraintParticipation(
+      const systems::Context<T>& context, DeformableBodyIndex index,
+      geometry::internal::ContactParticipation* constraint_participation) const;
 
   /* Computes the partial permutation that maps degrees of freedom of the
    deformable body with the given `index` to degrees of freedom that belong to

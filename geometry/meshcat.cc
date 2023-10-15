@@ -1812,7 +1812,12 @@ class Meshcat::Impl {
             .get("/*",
                  [&](uWS::HttpResponse<kSsl>* res, uWS::HttpRequest* req) {
                    DRAKE_DEMAND(IsThread(websocket_thread_id_));
-                   res->end(GetUrlContent(req->getUrl()));
+                   const std::string& content = GetUrlContent(req->getUrl());
+                   if (content.substr(0, 15) == "<!DOCTYPE html>") {
+                     res->writeHeader("Content-Type",
+                                      "text/html; charset=utf-8");
+                   }
+                   res->end(content);
                  })
             .ws<PerSocketData>("/*", std::move(behavior));
     app_ = &app;
@@ -2479,8 +2484,8 @@ Meshcat::Gamepad Meshcat::GetGamepad() const {
   return impl().GetGamepad();
 }
 
-void Meshcat::EnableWebXR() {
-  impl().EnableWebXR();
+void Meshcat::EnableWebXR(std::string mode) {
+  impl().EnableWebXR(std::move(mode));
 }
 
 std::string Meshcat::StaticHtml() {

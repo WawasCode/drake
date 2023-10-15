@@ -366,6 +366,12 @@ struct SetObjectData {
   MSGPACK_DEFINE_MAP(type, path, object);
 };
 
+struct EnableWebXRData {
+  std::string type{"enable_webxr"};
+  std::string mode;
+  MSGPACK_DEFINE_MAP(type, mode);
+};
+
 template <typename CameraData>
 struct LumpedCameraData {
   CameraData object;

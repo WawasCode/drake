@@ -5,6 +5,7 @@
 #include "drake/multibody/fem/matrix_utilities.h"
 #include "drake/multibody/plant/compliant_contact_manager.h"
 #include "drake/multibody/plant/deformable_driver.h"
+#include "drake/multibody/plant/multibody_plant.h"
 #include "drake/systems/framework/diagram_builder.h"
 
 using drake::geometry::GeometryId;
@@ -29,16 +30,6 @@ using std::make_unique;
 namespace drake {
 namespace multibody {
 namespace internal {
-
-// Friend class used to provide access to a selection of private functions in
-// CompliantContactManager for testing purposes.
-class CompliantContactManagerTester {
- public:
-  static const DeformableDriver<double>* deformable_driver(
-      const CompliantContactManager<double>& manager) {
-    return manager.deformable_driver_.get();
-  }
-};
 
 /* This fixture tests DeformableDriver member functions associated with the
  concept of contact. In particular, it sets up two identical and overlapping
@@ -81,7 +72,8 @@ class DeformableDriverContactTest : public ::testing::Test {
     auto contact_manager = make_unique<CompliantContactManager<double>>();
     manager_ = contact_manager.get();
     plant_->SetDiscreteUpdateManager(std::move(contact_manager));
-    driver_ = CompliantContactManagerTester::deformable_driver(*manager_);
+    driver_ = manager_->deformable_driver();
+    DRAKE_DEMAND(driver_ != nullptr);
 
     builder.Connect(model_->vertex_positions_port(),
                     scene_graph_->get_source_configuration_port(
@@ -372,7 +364,7 @@ TEST_F(DeformableDriverContactTest, AppendLinearDynamicsMatrix) {
 TEST_F(DeformableDriverContactTest, AppendDiscreteContactPairs) {
   const Context<double>& plant_context =
       plant_->GetMyContextFromRoot(*context_);
-  std::vector<DiscreteContactPair<double>> contact_pairs;
+  DiscreteContactData<DiscreteContactPair<double>> contact_pairs;
   driver_->AppendDiscreteContactPairs(plant_context, &contact_pairs);
 
   const DeformableContact<double>& contact_data =
@@ -392,7 +384,8 @@ TEST_F(DeformableDriverContactTest, AppendDiscreteContactPairs) {
   GeometryId id0 = model_->GetGeometryId(body_id0_);
   GeometryId id1 = model_->GetGeometryId(body_id1_);
 
-  for (const DiscreteContactPair<double>& pair : contact_pairs) {
+  for (int i = 0; i < contact_pairs.size(); ++i) {
+    const DiscreteContactPair<double>& pair = contact_pairs[i];
     EXPECT_TRUE(pair.id_A == id0 || pair.id_A == id1);
     EXPECT_EQ(pair.id_B, rigid_geometry_id_);
     /* The contact point is on the z = -0.25 plane, the top surface of the rigid

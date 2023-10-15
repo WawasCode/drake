@@ -1,12 +1,12 @@
 load(
-    "@drake//tools/skylark:drake_cc.bzl",
+    "//tools/skylark:drake_cc.bzl",
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
     "drake_cc_package_library",
 )
 load(
-    "@drake//tools/skylark:drake_py.bzl",
+    "//tools/skylark:drake_py.bzl",
     "drake_py_binary",
     "drake_py_unittest",
 )
@@ -138,6 +138,7 @@ drake_cc_library(
     internal = True,
     visibility = ["//visibility:private"],
     deps = [
+        "//common:drake_export",
         "//common:essential",
         "@nlohmann_internal//:nlohmann",
     ],
@@ -296,6 +297,7 @@ drake_cc_binary(
         "//geometry:drake_visualizer",
         "//geometry:scene_graph",
         "//geometry/render_vtk",
+        "//lcm",
         "//multibody/parsing",
         "//multibody/plant",
         "//systems/analysis:simulator",
@@ -361,6 +363,7 @@ drake_cc_googletest(
         ":internal_merge_gltf",
         "//common:find_resource",
         "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:expect_throws_message",
         "@nlohmann_internal//:nlohmann",
     ],
 )
