@@ -787,6 +787,11 @@ class Meshcat {
   gamepad is working), see https://beej.us/blog/data/javascript-gamepad/. */
   Gamepad GetGamepad() const;
 
+  /** Enabels VR/AR in the current Meshcat scene.*/
+  void EnableWebXR(std::string mode);
+
+  /** Makes the device controllers visible in an active WebXR immersive session. */
+  void VisualizeWebXRControllers();
   //@}
 
   /** Returns an HTML string that can be saved to a file for a snapshot of the

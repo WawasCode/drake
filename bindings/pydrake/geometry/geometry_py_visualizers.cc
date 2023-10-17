@@ -333,6 +333,10 @@ void DoScalarIndependentDefinitions(py::module m) {
         .def("DeleteAddedControls", &Class::DeleteAddedControls,
             cls_doc.DeleteAddedControls.doc)
         .def("GetGamepad", &Class::GetGamepad, cls_doc.GetGamepad.doc)
+        .def("EnableWebXR", &Class::EnableWebXR, py::arg("mode"),
+            cls_doc.EnableWebXR.doc)
+        .def("VisualizeWebXRControllers",&Class::VisualizeWebXRControllers,
+            cls_doc.VisualizeWebXRControllers.doc)
         .def("StaticHtml", &Class::StaticHtml, cls_doc.StaticHtml.doc)
         .def("StartRecording", &Class::StartRecording,
             py::arg("frames_per_second") = 32.0,

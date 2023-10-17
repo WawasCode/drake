@@ -476,6 +476,17 @@ struct Gamepad {
   MSGPACK_DEFINE_MAP(index, button_values, axes);
 };
 
+struct EnableWebXRData {
+  std::string type{"enable_webxr"};
+  std::string mode;
+  MSGPACK_DEFINE_MAP(type, mode);
+};
+
+struct VisualizeWebXRControllersData{
+  std::string type {"visualize_vr_controller"};
+  MSGPACK_DEFINE_MAP(type);
+
+};
 struct UserInterfaceEvent {
   std::string type;
   std::string name;
