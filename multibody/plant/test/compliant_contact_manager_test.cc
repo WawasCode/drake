@@ -181,7 +181,7 @@ class SpheresStackTest : public SpheresStack, public ::testing::Test {
     for (int i = 0; i < static_cast<int>(pairs.size()); ++i) {
       const DiscreteContactPair<double>& point_pair = pairs[i];
 
-      if (i == 0) {
+      if (i < num_point_pairs) {
         // Unit tests for point contact only.
         // Here we use our knowledge that we always place point contact pairs
         // followed by hydroelastic contact pairs.
@@ -204,6 +204,19 @@ class SpheresStackTest : public SpheresStack, public ::testing::Test {
         const double pz_WC = -k2 / (k1 + k2) * penetration_distance_ + pz_WS1 +
                              sphere1_params.radius;
         EXPECT_NEAR(point_pair.p_WC.z(), pz_WC, 1.0e-14);
+
+        // Check the optional parameters are set correctly for point contact.
+        // The index into `point_pair_penetrations` should match the index into
+        // `pairs`.
+        EXPECT_TRUE(point_pair.point_pair_index.has_value());
+        EXPECT_EQ(point_pair.point_pair_index.value(), i);
+        EXPECT_FALSE(point_pair.surface_index.has_value());
+        EXPECT_FALSE(point_pair.face_index.has_value());
+      } else {
+        // Check the optional parameters are set correctly for hydro.
+        EXPECT_FALSE(point_pair.point_pair_index.has_value());
+        EXPECT_TRUE(point_pair.surface_index.has_value());
+        EXPECT_TRUE(point_pair.face_index.has_value());
       }
 
       // Unit tests for both point and hydroelastic discrete pairs.
@@ -568,10 +581,8 @@ TEST_F(SpheresStackTest, DoCalcDiscreteValues) {
 TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsEquilibriumPosition) {
   const double kTolerance = 1e-15;
 
-  std::unique_ptr<ContactResults<double>> contact_results =
-      std::make_unique<ContactResults<double>>();
-  CompliantContactManagerTester::DoCalcContactResults(
-      *manager_, *plant_context_, contact_results.get());
+  const ContactResults<double>& contact_results =
+      manager_->EvalContactResults(*plant_context_);
   const ContactTestConfig& config = GetParam();
 
   // Body should be in equilibrium so we expect the contact force to oppose
@@ -581,11 +592,11 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsEquilibriumPosition) {
 
   if (config.point_contact) {
     // Test point contact.
-    EXPECT_EQ(contact_results->num_point_pair_contacts(), 1);
-    EXPECT_EQ(contact_results->num_hydroelastic_contacts(), 0);
+    EXPECT_EQ(contact_results.num_point_pair_contacts(), 1);
+    EXPECT_EQ(contact_results.num_hydroelastic_contacts(), 0);
 
     const PointPairContactInfo<double>& contact_info =
-        contact_results->point_pair_contact_info(0);
+        contact_results.point_pair_contact_info(0);
 
     // PointPairContactInfo expresses the contact force acting on body B of the
     // pair. Flip the sign of the contact force if `body_` is not body B.
@@ -601,11 +612,11 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsEquilibriumPosition) {
     EXPECT_NEAR(contact_info.separation_speed(), 0, kEps);
   } else {
     // Test hydroelastic contact.
-    EXPECT_EQ(contact_results->num_point_pair_contacts(), 0);
-    EXPECT_EQ(contact_results->num_hydroelastic_contacts(), 1);
+    EXPECT_EQ(contact_results.num_point_pair_contacts(), 0);
+    EXPECT_EQ(contact_results.num_hydroelastic_contacts(), 1);
 
     const HydroelasticContactInfo<double>& contact_info =
-        contact_results->hydroelastic_contact_info(0);
+        contact_results.hydroelastic_contact_info(0);
 
     // HydroelasticContactInfo expresses the contact force acting on body A of
     // the pair. Flip the sign of the contact force if `body_` is not body A.
@@ -652,10 +663,8 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsBodyInStiction) {
   // Simulate the plant for 50 time steps, long enough to reach steady state.
   Simulate(50);
 
-  std::unique_ptr<ContactResults<double>> contact_results =
-      std::make_unique<ContactResults<double>>();
-  CompliantContactManagerTester::DoCalcContactResults(
-      *manager_, *plant_context_, contact_results.get());
+  const ContactResults<double>& contact_results =
+      manager_->EvalContactResults(*plant_context_);
 
   // Body should be in stiction so we expect the contact force to oppose both
   // gravity and the externally applied tangential force.
@@ -665,11 +674,11 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsBodyInStiction) {
 
   if (config.point_contact) {
     // Test point contact.
-    EXPECT_EQ(contact_results->num_point_pair_contacts(), 1);
-    EXPECT_EQ(contact_results->num_hydroelastic_contacts(), 0);
+    EXPECT_EQ(contact_results.num_point_pair_contacts(), 1);
+    EXPECT_EQ(contact_results.num_hydroelastic_contacts(), 0);
 
     const PointPairContactInfo<double>& contact_info =
-        contact_results->point_pair_contact_info(0);
+        contact_results.point_pair_contact_info(0);
 
     // PointPairContactInfo reports the contact force acting on body B of the
     // pair. Flip the sign of the contact force if `body_` is not body B.
@@ -680,11 +689,11 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsBodyInStiction) {
                                 expected_contact_force, kTolerance));
   } else {
     // Test hydroelastic contact.
-    EXPECT_EQ(contact_results->num_point_pair_contacts(), 0);
-    EXPECT_EQ(contact_results->num_hydroelastic_contacts(), 1);
+    EXPECT_EQ(contact_results.num_point_pair_contacts(), 0);
+    EXPECT_EQ(contact_results.num_hydroelastic_contacts(), 1);
 
     const HydroelasticContactInfo<double>& contact_info =
-        contact_results->hydroelastic_contact_info(0);
+        contact_results.hydroelastic_contact_info(0);
 
     // HydroelasticContactInfo reports the contact force acting on body A of
     // the pair. Flip the sign of the contact force if `body_` is not body A.
@@ -708,10 +717,8 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsBodyInSlip) {
   // Simulate the plant for 10 time steps, long enough to reach steady state.
   Simulate(10);
 
-  std::unique_ptr<ContactResults<double>> contact_results =
-      std::make_unique<ContactResults<double>>();
-  CompliantContactManagerTester::DoCalcContactResults(
-      *manager_, *plant_context_, contact_results.get());
+  const ContactResults<double>& contact_results =
+      manager_->EvalContactResults(*plant_context_);
 
   // For this case the friction force must be on the friction cone. For TAMSI
   // accuracy of this prediction depends on the accuracy of the slip speed,
@@ -723,11 +730,11 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsBodyInSlip) {
 
   if (config.point_contact) {
     // Test point contact.
-    EXPECT_EQ(contact_results->num_point_pair_contacts(), 1);
-    EXPECT_EQ(contact_results->num_hydroelastic_contacts(), 0);
+    EXPECT_EQ(contact_results.num_point_pair_contacts(), 1);
+    EXPECT_EQ(contact_results.num_hydroelastic_contacts(), 0);
 
     const PointPairContactInfo<double>& contact_info =
-        contact_results->point_pair_contact_info(0);
+        contact_results.point_pair_contact_info(0);
 
     // PointPairContactInfo reports the contact force acting on body B of the
     // pair. Flip the sign of the contact force if `body_` is not body B.
@@ -745,11 +752,11 @@ TEST_P(RigidBodyOnCompliantGround, VerifyContactResultsBodyInSlip) {
     EXPECT_GT(contact_info.slip_speed(), 0);
   } else {
     // Test hydroelastic contact.
-    EXPECT_EQ(contact_results->num_point_pair_contacts(), 0);
-    EXPECT_EQ(contact_results->num_hydroelastic_contacts(), 1);
+    EXPECT_EQ(contact_results.num_point_pair_contacts(), 0);
+    EXPECT_EQ(contact_results.num_hydroelastic_contacts(), 1);
 
     const HydroelasticContactInfo<double>& contact_info =
-        contact_results->hydroelastic_contact_info(0);
+        contact_results.hydroelastic_contact_info(0);
 
     // HydroelasticContactInfo reports the contact force acting on body A of
     // the pair. Flip the sign of the contact force if `body_` is not body A.

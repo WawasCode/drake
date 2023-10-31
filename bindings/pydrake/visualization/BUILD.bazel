@@ -37,6 +37,7 @@ drake_pybind_library(
     cc_srcs = [
         "visualization_py.cc",
         "visualization_py_config.cc",
+        "visualization_py_sliders.cc",
         "visualization_py.h",
     ],
     package_info = PACKAGE_INFO,
@@ -51,7 +52,7 @@ drake_pybind_library(
         "//bindings/pydrake/systems",
         "//bindings/pydrake/geometry",
         "//bindings/pydrake:lcm_py",
-        "//bindings/pydrake:symbolic_py",
+        "//bindings/pydrake/symbolic",
         "//lcmtypes:lcmtypes_drake_py",
     ],
     py_srcs = [

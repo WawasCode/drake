@@ -571,42 +571,64 @@ Binding<Cost> MathematicalProgram::AddCost(const Expression& e) {
   return AddCost(internal::ParseCost(e));
 }
 
-std::tuple<Binding<LinearCost>, VectorX<symbolic::Variable>,
-           MatrixX<symbolic::Expression>>
-MathematicalProgram::AddMaximizeLogDeterminantCost(
-    const Eigen::Ref<const MatrixX<symbolic::Expression>>& X) {
+namespace {
+void CreateLogDetermiant(
+    MathematicalProgram* prog,
+    const Eigen::Ref<const MatrixX<symbolic::Expression>>& X,
+    VectorX<symbolic::Variable>* t, MatrixX<symbolic::Expression>* Z) {
   DRAKE_DEMAND(X.rows() == X.cols());
   const int X_rows = X.rows();
-  auto Z_lower = NewContinuousVariables(X_rows * (X_rows + 1) / 2);
-  MatrixX<symbolic::Expression> Z(X_rows, X_rows);
-  Z.setZero();
+  auto Z_lower = prog->NewContinuousVariables(X_rows * (X_rows + 1) / 2);
+  Z->resize(X_rows, X_rows);
+  Z->setZero();
   // diag_Z is the diagonal matrix that only contains the diagonal entries of Z.
   MatrixX<symbolic::Expression> diag_Z(X_rows, X_rows);
   diag_Z.setZero();
   int Z_lower_index = 0;
   for (int j = 0; j < X_rows; ++j) {
     for (int i = j; i < X_rows; ++i) {
-      Z(i, j) = Z_lower(Z_lower_index++);
+      (*Z)(i, j) = Z_lower(Z_lower_index++);
     }
-    diag_Z(j, j) = Z(j, j);
+    diag_Z(j, j) = (*Z)(j, j);
   }
 
   MatrixX<symbolic::Expression> psd_mat(2 * X_rows, 2 * X_rows);
   // clang-format off
-  psd_mat << X,             Z,
-             Z.transpose(), diag_Z;
+  psd_mat << X,             *Z,
+             Z->transpose(), diag_Z;
   // clang-format on
-  AddPositiveSemidefiniteConstraint(psd_mat);
+  prog->AddPositiveSemidefiniteConstraint(psd_mat);
   // Now introduce the slack variable t.
-  auto t = NewContinuousVariables(X_rows);
+  *t = prog->NewContinuousVariables(X_rows);
   // Introduce the constraint log(Z(i, i)) >= t(i).
   for (int i = 0; i < X_rows; ++i) {
-    AddExponentialConeConstraint(
-        Vector3<symbolic::Expression>(Z(i, i), 1, t(i)));
+    prog->AddExponentialConeConstraint(
+        Vector3<symbolic::Expression>((*Z)(i, i), 1, (*t)(i)));
   }
+}
+}  // namespace
+std::tuple<Binding<LinearCost>, VectorX<symbolic::Variable>,
+           MatrixX<symbolic::Expression>>
+MathematicalProgram::AddMaximizeLogDeterminantCost(
+    const Eigen::Ref<const MatrixX<symbolic::Expression>>& X) {
+  VectorX<symbolic::Variable> t;
+  MatrixX<symbolic::Expression> Z;
+  CreateLogDetermiant(this, X, &t, &Z);
 
   const auto cost = AddLinearCost(-Eigen::VectorXd::Ones(t.rows()), t);
   return std::make_tuple(cost, std::move(t), std::move(Z));
+}
+
+std::tuple<Binding<LinearConstraint>, VectorX<symbolic::Variable>,
+           MatrixX<symbolic::Expression>>
+MathematicalProgram::AddLogDeterminantLowerBoundConstraint(
+    const Eigen::Ref<const MatrixX<symbolic::Expression>>& X, double lower) {
+  VectorX<symbolic::Variable> t;
+  MatrixX<symbolic::Expression> Z;
+  CreateLogDetermiant(this, X, &t, &Z);
+  const auto constraint =
+      AddLinearConstraint(Eigen::RowVectorXd::Ones(t.rows()), lower, kInf, t);
+  return std::make_tuple(constraint, std::move(t), std::move(Z));
 }
 
 Binding<LinearCost> MathematicalProgram::AddMaximizeGeometricMeanCost(
@@ -1188,12 +1210,27 @@ MathematicalProgram::AddPositiveDiagonallyDominantMatrixConstraint(
   return Y;
 }
 
+MatrixX<symbolic::Expression> MathematicalProgram::
+    TightenPsdConstraintToDd(
+        const Binding<PositiveSemidefiniteConstraint>& constraint) {
+  RemoveConstraint(constraint);
+  // Variables are flattened by the Flatten method, which flattens in
+  // column-major order. This is the same convention as Eigen, so we can use the
+  // map methods.
+  const int n = constraint.evaluator()->matrix_rows();
+  const MatrixXDecisionVariable mat_vars =
+      Eigen::Map<const MatrixXDecisionVariable>(constraint.variables().data(),
+                                                n, n);
+  return AddPositiveDiagonallyDominantMatrixConstraint(
+      mat_vars.cast<Expression>());
+}
+
 namespace {
 
 // Constructs the matrices A, lb, ub for the linear constraint lb <= A * X <= ub
 // encoding that X is in DD* for a matrix of size n. Returns the tuple
 // (A, lb, ub).
-std::tuple<Eigen::MatrixXd, Eigen::VectorXd, Eigen::VectorXd>
+std::tuple<Eigen::SparseMatrix<double>, Eigen::VectorXd, Eigen::VectorXd>
 ConstructPositiveDiagonallyDominantDualConeConstraintMatricesForN(const int n) {
   // Return the index of Xᵢⱼ in the vector created by stacking the column of X
   // into a vector.
@@ -1201,17 +1238,22 @@ ConstructPositiveDiagonallyDominantDualConeConstraintMatricesForN(const int n) {
     return i + n * j;
   };
 
-  // TODO(Alexandre.Amice) Make A an Eigen::Sparse when AddLinearConstraint
-  // supports adding sparse A matrices.
-  Eigen::MatrixXd A = Eigen::MatrixXd::Zero(n * n, n * n);
-  Eigen::VectorXd lb = Eigen::VectorXd::Zero(n * n);
-  Eigen::VectorXd ub = kInf * Eigen::VectorXd::Ones(n * n);
+  // The DD dual cone constraint is a sparse linear constraint. We instantiate
+  // the A matrix using this triplet list.
+  std::vector<Eigen::Triplet<double>> A_triplet_list;
+  // There are n rows with one non-zero entry in the row, and 2 * (n choose 2)
+  // rows with 4 non-zero entries in the row. This requires 4*n*n-3*n non-zero
+  // entries.
+  A_triplet_list.reserve(4 * n * n - 3 * n);
+
+  const Eigen::VectorXd lb = Eigen::VectorXd::Zero(n * n);
+  const Eigen::VectorXd ub = kInf * Eigen::VectorXd::Ones(n * n);
 
   // vᵢᵀXvᵢ ≥ 0 is equivalent to Xᵢᵢ ≥ 0 when vᵢ is a vector with exactly one
   // entry equal to 1.
   for (int i = 0; i < n; ++i) {
     // Variable Xᵢᵢ is in position i*(n+1)
-    A(i, compute_flat_index(i, i)) = 1;
+    A_triplet_list.emplace_back(i, compute_flat_index(i, i), 1);
   }
   // When vᵢ is a vector with two non-zero at entries k and j, we can choose
   // without loss of generality that the jth entry to be 1, and the kth entry be
@@ -1221,20 +1263,25 @@ ConstructPositiveDiagonallyDominantDualConeConstraintMatricesForN(const int n) {
   for (int j = 0; j < n; ++j) {
     for (int k = j + 1; k < n; ++k) {
       // X(k, k) + X(k, j) + X(j, k) + X(j, j)
-      A(row_ctr, compute_flat_index(k, k)) = 1;
-      A(row_ctr, compute_flat_index(j, j)) = 1;
-      A(row_ctr, compute_flat_index(k, j)) = 1;
-      A(row_ctr, compute_flat_index(j, k)) = 1;
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(k, k), 1);
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(j, j), 1);
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(j, k), 1);
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(k, j), 1);
       ++row_ctr;
+
       // X(k, k) - X(k, j) - X(j, k) + X(j, j)
-      A(row_ctr, compute_flat_index(k, k)) = 1;
-      A(row_ctr, compute_flat_index(j, j)) = 1;
-      A(row_ctr, compute_flat_index(k, j)) = -1;
-      A(row_ctr, compute_flat_index(j, k)) = -1;
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(k, k), 1);
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(j, j), 1);
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(j, k), -1);
+      A_triplet_list.emplace_back(row_ctr, compute_flat_index(k, j), -1);
       ++row_ctr;
     }
   }
-  return std::make_tuple(A, lb, ub);
+  DRAKE_ASSERT(row_ctr == n * n);
+  DRAKE_ASSERT(ssize(A_triplet_list) == 4 * n * n - 3 * n);
+  Eigen::SparseMatrix<double> A(row_ctr, n * n);
+  A.setFromTriplets(A_triplet_list.begin(), A_triplet_list.end());
+  return std::make_tuple(std::move(A), std::move(lb), std::move(ub));
 }
 }  // namespace
 
@@ -1249,11 +1296,12 @@ MathematicalProgram::AddPositiveDiagonallyDominantDualConeMatrixConstraint(
   symbolic::DecomposeAffineExpressions(
       Eigen::Map<const VectorX<symbolic::Expression>>(X.data(), X.size()),
       &A_expr, &b_expr, &variables);
-  const std::tuple<Eigen::MatrixXd, Eigen::VectorXd, Eigen::VectorXd>
+  const std::tuple<Eigen::SparseMatrix<double>, Eigen::VectorXd,
+                   Eigen::VectorXd>
       constraint_mats{
           ConstructPositiveDiagonallyDominantDualConeConstraintMatricesForN(n)};
   return AddLinearConstraint(
-      std::get<0>(constraint_mats) * A_expr,  // A * A_expr
+      (std::get<0>(constraint_mats) * A_expr).sparseView(),  // A * A_expr
       std::get<1>(constraint_mats) -
           std::get<0>(constraint_mats) * b_expr,  // lb - A * b_expr
       std::get<2>(constraint_mats),  // ub - A * b_expr, but since ub is kInf no
@@ -1266,13 +1314,29 @@ MathematicalProgram::AddPositiveDiagonallyDominantDualConeMatrixConstraint(
     const Eigen::Ref<const MatrixX<symbolic::Variable>>& X) {
   const int n = X.rows();
   DRAKE_DEMAND(X.cols() == n);
-  const std::tuple<Eigen::MatrixXd, Eigen::VectorXd, Eigen::VectorXd>
+  const std::tuple<Eigen::SparseMatrix<double>, Eigen::VectorXd,
+                   Eigen::VectorXd>
       constraint_mats{
           ConstructPositiveDiagonallyDominantDualConeConstraintMatricesForN(n)};
   return AddLinearConstraint(
       std::get<0>(constraint_mats), std::get<1>(constraint_mats),
       std::get<2>(constraint_mats),
       Eigen::Map<const VectorXDecisionVariable>(X.data(), X.size()));
+}
+
+Binding<LinearConstraint> MathematicalProgram::
+    RelaxPsdConstraintToDdDualCone(
+        const Binding<PositiveSemidefiniteConstraint>& constraint) {
+  RemoveConstraint(constraint);
+  // Variables are flattened by the Flatten method, which flattens in
+  // column-major order. This is the same convention as Eigen, so we can use the
+  // map methods.
+  const int n = constraint.evaluator()->matrix_rows();
+  const MatrixXDecisionVariable mat_vars =
+      Eigen::Map<const MatrixXDecisionVariable>(constraint.variables().data(),
+                                                n, n);
+  return AddPositiveDiagonallyDominantDualConeMatrixConstraint(
+      mat_vars);
 }
 
 namespace {
@@ -1391,6 +1455,20 @@ MathematicalProgram::AddScaledDiagonallyDominantMatrixConstraint(
   return M;
 }
 
+std::vector<std::vector<Matrix2<symbolic::Variable>>> MathematicalProgram::
+    TightenPsdConstraintToSdd(
+        const Binding<PositiveSemidefiniteConstraint>& constraint) {
+  RemoveConstraint(constraint);
+  // Variables are flattened by the Flatten method, which flattens in
+  // column-major order. This is the same convention as Eigen, so we can use the
+  // map methods.
+  const int n = constraint.evaluator()->matrix_rows();
+  const MatrixXDecisionVariable mat_vars =
+      Eigen::Map<const MatrixXDecisionVariable>(constraint.variables().data(),
+                                                n, n);
+  return AddScaledDiagonallyDominantMatrixConstraint(mat_vars);
+}
+
 std::vector<Binding<RotatedLorentzConeConstraint>>
 MathematicalProgram::AddScaledDiagonallyDominantDualConeMatrixConstraint(
     const Eigen::Ref<const MatrixX<symbolic::Expression>>& X) {
@@ -1422,6 +1500,21 @@ MathematicalProgram::AddScaledDiagonallyDominantDualConeMatrixConstraint(
     const Eigen::Ref<const MatrixX<symbolic::Variable>>& X) {
   return AddScaledDiagonallyDominantDualConeMatrixConstraint(
       X.cast<Expression>());
+}
+
+std::vector<Binding<RotatedLorentzConeConstraint>> MathematicalProgram::
+    RelaxPsdConstraintToSddDualCone(
+        const Binding<PositiveSemidefiniteConstraint>& constraint) {
+  RemoveConstraint(constraint);
+  // Variables are flattened by the Flatten method, which flattens in
+  // column-major order. This is the same convention as Eigen, so we can use the
+  // map methods.
+  const int n = constraint.evaluator()->matrix_rows();
+  const MatrixXDecisionVariable mat_vars =
+      Eigen::Map<const MatrixXDecisionVariable>(constraint.variables().data(),
+                                                n, n);
+  return AddScaledDiagonallyDominantDualConeMatrixConstraint(
+      mat_vars);
 }
 
 Binding<ExponentialConeConstraint> MathematicalProgram::AddConstraint(

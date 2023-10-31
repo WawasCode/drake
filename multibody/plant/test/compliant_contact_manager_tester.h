@@ -54,13 +54,6 @@ class CompliantContactManagerTester {
     return manager.EvalContactKinematics(context);
   }
 
-  static void DoCalcContactResults(
-      const CompliantContactManager<double>& manager,
-      const drake::systems::Context<double>& context,
-      ContactResults<double>* contact_results) {
-    return manager.DoCalcContactResults(context, contact_results);
-  }
-
   static const SapDriver<double>& sap_driver(
       const CompliantContactManager<double>& manager) {
     DRAKE_DEMAND(manager.sap_driver_ != nullptr);
@@ -93,7 +86,7 @@ class CompliantContactManagerTester {
         // If added to the Jacobian, it must have a valid index.
         EXPECT_TRUE(tree_jacobian.tree.is_valid());
         const int col_offset =
-            topology.tree_velocities_start(tree_jacobian.tree);
+            topology.tree_velocities_start_in_v(tree_jacobian.tree);
         const int tree_nv = topology.num_tree_velocities(tree_jacobian.tree);
         J_AcBc_C.block(row_offset, col_offset, 3, tree_nv) =
             tree_jacobian.J.MakeDenseMatrix();
